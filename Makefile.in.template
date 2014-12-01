@@ -1,0 +1,21 @@
+e# ---------------------------------------------------------------
+#
+#  Default build options for Raster
+#
+# ---------------------------------------------------------------
+
+# The home directory for CUDA (required)
+CUDA_HOME = /opt/cuda-6.0
+
+# The home directory for HDF5 (required)
+HDF5_HOME = /usr/local 
+
+# C++ compiler options
+CC = g++
+CC_FLAGS = -O3 -std=c++0x # -g -Wall
+
+# CUDA compiler options
+#NVCC = $(CUDA_HOME)/bin/nvcc
+NVCC = nvcc
+NV_FLAGS = -O3 # --ptxas-options=-v -G -g 
+
