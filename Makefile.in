@@ -1,0 +1,22 @@
+# ---------------------------------------------------------------
+#
+#  Default build options for Raster
+#
+# ---------------------------------------------------------------
+
+
+# The home directory for HDF5 (required)
+HDF5_HOME = /afs/slac.stanford.edu/g/ki/software/hdf5/1.8.9/@sys
+
+R3D_HOME = r3d
+
+# C++ compiler options
+CC = gcc 
+CFLAGS = -O3 # -std=c99 # -g
+
+# CUDA compiler options
+# The home directory for CUDA (required)
+CUDA_HOME = /opt/cuda-6.5
+NVCC = $(CUDA_HOME)/bin/nvcc
+NV_FLAGS = -O3  --ptxas-options=-v #-G -g 
+
