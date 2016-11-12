@@ -25,27 +25,37 @@ endif
 include $(MAKEFILE_IN)
 
 # Source files
-CC_SRC = driver.cpp
-NV_SRC = curas.cu
+CC_SRC = driver.c #utils.c
 
-COMMON = HDF_IO.hh
-OBJ = $(NV_SRC:.cu=.o) $(CC_SRC:.cpp=.o)
-EXE = raster
+COMMON = HDF_IO.hh Makefile utils.h cur3d.h
+OBJ = $(NV_SRC:.cu=.o) $(CC_SRC:.c=.o)
+EXE = cur3d
 
 # base libraries and include dirs
-INC = -I./
+INC = -I./ 
 LIB =
 LDFLAGS = 
 
 # Set up CUDA dependencies
+ifdef CUDA_HOME
+COMMON += cur3d.h
+NV_SRC = cur3d.cu
 INC += -I$(CUDA_HOME)/include 
-LIB += -L$(CUDA_HOME)/lib64
-LDFLAGS += -lcuda -lcudart -lcublas -lcufft 
+LIB +=  -L$(CUDA_HOME)/lib64
+LDFLAGS += -lcuda -lcudart -lcublas -lcufft
+CFLAGS += -DCUDA
+#CC = $(NVCC)
+endif
 
 # Set up HDF5 dependencies
-INC += -I$(HDF5_HOME)/include
-LIB += -L$(HDF5_HOME)/lib
-LDFLAGS += -lhdf5
+#INC += -I$(HDF5_HOME)/include
+#LIB += -L$(HDF5_HOME)/lib
+#LDFLAGS += -lhdf5
+
+# R3D
+INC += -I$(R3D_HOME)
+LIB += -L$(R3D_HOME)
+LDFLAGS += -lr3d
 
 
 all: $(EXE)
@@ -53,14 +63,14 @@ all: $(EXE)
 $(EXE): $(OBJ)
 	$(CC) $(LIB) $(OBJ) -o $@ $(LDFLAGS) $(CFLAGS)
 
-.cpp.o: $(COMMON)
-	$(CC) $(INC) $(DEF) $(CC_FLAGS) -c $< -o $@
+.c.o: $(COMMON)
+	$(CC) $(INC) $(DEF) $(CFLAGS) -c $< -o $@
 
 # WHY DOESN'T THIS RULE WORK??
 #.cu.o: 
 	#$(NVCC) $(INC) $(DEF) $(NV_FLAGS) -c $< -o $@
 
-curas.o: curas.cu
+cur3d.o: cur3d.cu
 	$(NVCC) $(INC) $(DEF) $(NV_FLAGS) -c $< -o $@
 	
 clean:

@@ -13,35 +13,80 @@
 
 #define popc(x) __builtin_popcount(x)
 
+
+// position of the lowest set bit
+r3d_int lbpos(r3d_int x) {
+	// TODO: is there an even faster implementation??
+	const unsigned lbtable[32] = {0,  1, 28,  2, 29, 14, 24,  3, 30, 22, 20, 15, 25, 17,  4,  8,
+		31, 27, 13, 23, 21, 19, 16,  7, 26, 12, 18,  6, 11,  5, 10,  9};
+	return lbtable[((x&-x)*0x077CB531)>>27];
+}
+
 r3d_int snoob(r3d_int x) {
-	typedef unsigned int uint_t;
-	uint_t rightOne;
-	uint_t nextHigherOneBit;
- 	uint_t rightOnesPattern;
-	uint_t next = 0;
-	if(x) {
-		rightOne = x & -(signed)x;    
-		nextHigherOneBit = x + rightOne;
-		rightOnesPattern = x ^ nextHigherOneBit;
-		rightOnesPattern = (rightOnesPattern)/rightOne;
-		rightOnesPattern >>= 2;
-		next = nextHigherOneBit | rightOnesPattern;
-	}
-	return next;
+	unsigned rightOne;
+	unsigned nextHigherOneBit;
+ 	unsigned rightOnesPattern;
+	unsigned next = 0;
+	rightOne = x&-x;    
+	nextHigherOneBit = x + rightOne;
+	rightOnesPattern = x ^ nextHigherOneBit;
+	rightOnesPattern = (rightOnesPattern)/rightOne;
+	rightOnesPattern >>= 2;
+	return nextHigherOneBit | rightOnesPattern;
 }
 
 void print_binary(r3d_int bits, r3d_int n) {
 	r3d_int i;
+	//for(i = n-1; i >= 0; --i) 
 	for(i = 0; i < n; ++i) 
 		printf("%d", (bits>>i)&1);
 	printf("\n");
 }
 
+r3d_int process_intersections(r3d_int bits, r3d_int parity, r3d_rvec3* verts, r3d_int nverts, r3d_tet_data* tdata) {
+
+	r3d_int mask, nset, dim, intersection, tmpbits;
+	r3d_int tint, v, bits0, bits1, tet, i;
+
+	// TODO: this may not be great in CUDA...
+	dim = popc(bits)-1;
+	if(dim == 3) {
+		return parity^tdata->sgn[bits];
+	}
+
+	// decoupling the recursion parity for the two tets
+	intersection = 1;	
+	for(tet = 0; tet < 2; ++tet) {
+		for(nset = 0, tmpbits = bits&(0x0F<<(4*tet)); tmpbits; nset++, tmpbits ^= mask) {
+			mask = tmpbits&-tmpbits;
+			tint = process_intersections(bits^mask, parity^(nset&1), verts, nverts, tdata);
+			intersection &= tint;
+		}
+	}
+
+	if(dim == 4 & intersection) {
+		printf("Found 4-intersection, bits = ", parity); 
+		print_binary(bits, 8);
+
+		for(tet = 0; tet < 2; ++tet) {
+			printf(" tet %d, verts = ", tet); 
+			for(nset = 0, tmpbits = bits&(0x0F<<(4*tet)); tmpbits; nset++, tmpbits ^= mask) {
+				mask = tmpbits&-tmpbits;
+				printf("%d ", lbpos(mask>>(4*tet)));
+			}
+			printf("\n");
+		}
+	}
+
+	return intersection;
+}
+
 
 void raster_test_det() {
 
-	r3d_int v, i, j, z, f, g, fsgn;
+	r3d_int v, i, c, k, j, z, f, g, fsgn;
 	r3d_int curbits, shift, mask, nint;
+	r3d_real len, invlen, dotfac;
 
 	r3d_rvec3 verts[8];
 	memset(&verts, 0, sizeof(verts));
@@ -49,13 +94,19 @@ void raster_test_det() {
 		verts[v].xyz[v-1] = 1.0;
 	for(v = 5; v < 8; ++v)
 		verts[v].xyz[v-5] = -1.0;
-	//verts[0] = {-0.2, -0.2, -0.2};
-	verts[0].x = -0.0;
-	verts[0].y = -0.0;
-	verts[0].z = -0.0;
-	verts[4].x = 0.0;
-	verts[4].y = 0.0;
-	verts[4].z = 0.0;
+	verts[0].x = -0.2;
+	verts[0].y = -0.2;
+	verts[0].z = -0.2;
+	verts[4].x = 0.2;
+	verts[4].y = 0.2;
+	verts[4].z = 0.2;
+
+
+	// experimental!
+	//for(v = 0; v < 4; ++v)
+	//for(i = 0; i < 3; ++i) verts[v].xyz[i] = -0.1; 
+
+
 	for(v = 0; v < 8; ++v)
 		printf("verts[%d] = %f %f %f\n", v, verts[v].x, verts[v].y, verts[v].z);
 
@@ -76,39 +127,118 @@ void raster_test_det() {
 		tdata.sgn[allbits] = (tdata.det[allbits] > 0);
 	}
 
+	process_intersections(0xFF, 1, verts, 8, &tdata);
+
+#if 0
+
 	// TODO: is there a more bit-hacky may to do this??
 	typedef struct {
 		r3d_int parity;
 		r3d_int bits;
+		//r3d_int vinds[4];
 		//r3d_rvec3 pos;
 		//r3d_rvec3 ltd[3];
 	} r3d_ltd;
 	r3d_ltd stack[128]; // no idea how big
-	r3d_ltd curltd; 
+	r3d_ltd curltd, tmpltd; 
+	r3d_ltd tetltd[24];
+	r3d_int ntl; 
 	r3d_int nstack = 0;
 
-	// initialize the base case, recurse
-	stack[nstack].parity = +1;
-	stack[nstack].bits = 0x0F;
-	nstack++;
-	nint = 0;
+	// initialize the base case, with both tets
+	tmpltd.parity = 1;
+	tmpltd.bits = 0xFF;
+	stack[nstack++] = tmpltd;
+	nint = 0, ntl = 0;
 	while(nstack) {
+
+		// pop the stack
+		// stop if we are at a point (0-dimensional), quit
 		curltd = stack[--nstack];
-		if(!popc(curltd.bits)) continue;
-		printf("Current ltd: parity = %d, bits = ", curltd.parity); print_binary(curltd.bits, 4);
-		for(i = 0, nvb = 0; i < 4; ++i) {
-			mask = 1<<i;
-			if(curltd.bits&mask) {
-				stack[nstack].bits = mask^curltd.bits; 
-				stack[nstack].parity = curltd.parity*(1-2*((nvb++)&1)); 
-				nstack++;
-				nint++;
-			}
+		bits = curltd.bits;
+		dim = popc(bits)-1;
+		//printf("found node with parity %d, bits = ", curltd.parity); print_binary(bits, 8);
+
+		// TODO: this may not be great in CUDA...
+		if(dim == 3) {
+			printf("found intersection with parity %d, bits = ", curltd.parity); print_binary(bits, 8);
+			nint++;
+			continue;
+		}
+
+		// otherwise cycle through set bits to lower dimensionality 
+		// push them to the stack 
+		for(nvb = 0; bits; nvb++, bits ^= mask) {
+			mask = bits&-bits; // get the rightmost set bit 
+			tmpltd = curltd;
+			tmpltd.bits ^= mask; 
+			tmpltd.parity ^= nvb&1; 
+			stack[nstack++] = tmpltd;
+		}
+
+
+
+		// TODO: this may not be great in CUDA...
+		if(!dim) {
+			v = lbpos(bits);
+			curltd.pos = verts[v]; // index the set bit
+			curltd.vinds[dim] = v;
+			tetltd[ntl++] = curltd;
+			continue;
+		}
+
+		// otherwise cycle through set bits to lower dimensionality 
+		// push them to the stack 
+		nvb = 0;
+		while(bits) {
+			mask = bits&-bits; // extract least significant bit on a 2s complement machine
+			bits ^= mask;  // toggle the bit off
+			v = lbpos(mask); // get the index of the set bit
+			tmpltd = curltd;
+			tmpltd.ltd[dim-1] = verts[v];
+			tmpltd.vinds[dim] = v;
+			tmpltd.bits ^= mask; 
+			tmpltd.parity ^= (nvb++)&1; 
+			stack[nstack++] = tmpltd;
 		}
 	}
-
 	printf("num ltds = %d\n", nint);
+#endif
 
+#if 0
+	for(j = 0; j < ntl; ++j) {
+		curltd = tetltd[j];
+		//pritnf("stack[%d] = %f %f %f\n", i, stack[i].pos.x, stack[i].pos.y, stack[i].pos.z);
+
+			for(i = 0; i < 3; ++i) {
+				for(j = 0; j < 3; ++j)
+					curltd.ltd[i].xyz[j] -= curltd.pos.xyz[j];
+
+				// gram-schmidt
+				// TODO: is it dangerous to sweep upward in dimension??
+				// May introduce errors to produce face normals via different calculations here..
+				// TODO: can we count on normals to be robust if we calculate them top-down??
+				for(j = 0; j < i; ++j) {
+					dotfac = 0.0;
+					for(k = 0; k < 3; ++k)
+						dotfac += curltd.ltd[j].xyz[k]*curltd.ltd[i].xyz[k];
+					for(k = 0; k < 3; ++k)
+						curltd.ltd[i].xyz[k] -= dotfac*curltd.ltd[j].xyz[k];
+				}
+				len = 0.0;
+				for(j = 0; j < 3; ++j)
+					len += curltd.ltd[i].xyz[j]*curltd.ltd[i].xyz[j];
+				invlen = 1.0/sqrt(len);
+				for(j = 0; j < 3; ++j)
+					curltd.ltd[i].xyz[j] *= invlen;
+			}
+
+			printf("Current ltd: parity = %d, vert order = %d %d %d %d, bits = ", curltd.parity, curltd.vinds[0], curltd.vinds[1], curltd.vinds[2], curltd.vinds[3]); print_binary(curltd.bits, 4);
+			printf(" pos = %f %f %f\n", curltd.pos.x, curltd.pos.y, curltd.pos.z);
+			for(i = 0; i < 3; ++i)
+				printf("       %f %f %f\n", curltd.ltd[i].x, curltd.ltd[i].y, curltd.ltd[i].z);
+	}
+#endif
 
 	return;
 	
