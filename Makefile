@@ -34,7 +34,7 @@ EXE = cur3d
 # base libraries and include dirs
 INC = -I./ 
 LIB =
-LDFLAGS = 
+LDFLAGS = -lm 
 
 # Set up CUDA dependencies
 ifdef CUDA_HOME

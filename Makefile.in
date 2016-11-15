@@ -12,11 +12,11 @@ R3D_HOME = r3d
 
 # C++ compiler options
 CC = gcc 
-CFLAGS = -O3 # -std=c99 # -g
+CFLAGS = -O3  -Wall # -std=c99 # -g
 
 # CUDA compiler options
 # The home directory for CUDA (required)
-CUDA_HOME = /opt/cuda-6.5
+#CUDA_HOME = /usr/local/cuda
 NVCC = $(CUDA_HOME)/bin/nvcc
 NV_FLAGS = -O3  --ptxas-options=-v #-G -g 
 
