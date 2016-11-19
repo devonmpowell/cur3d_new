@@ -16,7 +16,6 @@
 
 #define R3D_TET 0
 #define R3D_CUBE 1
-#define R3D_TRIPRISM 2
 #define FUZZ 1.0e-30
 
 #define popc(x) __builtin_popcount(x)
@@ -106,9 +105,6 @@ int main(int argc, char **argv) {
 			curverts[v].xyz[2-i] = 1.0*((v>>i)&1); 
 		}
 	}
-	printf("Cube\n");
-	for(v = 0; v < 8; ++v)
-		printf("  verts[%d] = %f %f %f\n", v, curverts[v].x, curverts[v].y, curverts[v].z);
 
 	curpoly = &polys[1];
 	curverts = polys[1].verts;
@@ -119,11 +115,6 @@ int main(int argc, char **argv) {
 	for(v = 1; v < 4; ++v) {
 		curverts[v].xyz[v-1] += 4;
 	}
-	printf("Tet:\n");
-	for(v = 0; v < 4; ++v)
-		printf("  verts[%d] = %f %f %f\n", v, curverts[v].x, curverts[v].y, curverts[v].z);
-
-
 
 #else
 	// initialize a pair of tetrahedra
@@ -138,9 +129,6 @@ int main(int argc, char **argv) {
 		for(v = 1; v < 4; ++v) {
 			curverts[v].xyz[v-1] += (1-2*tet)*4;
 		}
-		printf("Tet %d:\n", tet);
-		for(v = 0; v < 4; ++v)
-			printf("  verts[%d] = %f %f %f\n", v, curverts[v].x, curverts[v].y, curverts[v].z); 
 	}
 #endif
 
@@ -186,14 +174,21 @@ void r3d_process_intersection(r3d_tinypoly* polys, r3d_int npoly) {
 	// simultaneously build an indexing array
 	// TODO: Can we circumvent an indexing step here?? 
 	// TODO: Can we save some comparisons here??
-	r3d_int nv, cumnv, p, i, nvb; 
+	// TODO: Can we not copy?
+	r3d_int nv, cumnv, p, v, i, nvb; 
 	bits = 0;
 	for(p = 0, cumnv = 0; p < npoly; ++p, cumnv += nv) {
+
+		// copy the vertices into a common buffer for fast bit indexing
 		nv = 4+4*polys[p].ptype; // TODO: HACK
 		memcpy(&tdata.allverts[cumnv], polys[p].verts, nv*sizeof(r3d_rvec3));
 		tdata.ptypes[p] = polys[p].ptype;
 		tdata.poffs[p] = cumnv;
 		tdata.pmasks[p] = ((1<<(cumnv+nv))-1)^((1<<cumnv)-1);
+		printf("Polyhedron %d, type = %d, verts = \n", p, polys[p].ptype);
+		for(v = 0; v < nv; ++v) 
+			printf(" %f %f %f\n", tdata.allverts[cumnv+v].x, tdata.allverts[cumnv+v].y, tdata.allverts[cumnv+v].z);
+			//printf("  (%f %f %f)\n", tdata.allverts[cumnv+v].x, tdata.allverts[cumnv+v].y, tdata.allverts[cumnv+v].z);
 	}
 	
 	// fill in all possible determinants, indexing by all numbers with 4 bits set 
@@ -205,9 +200,13 @@ void r3d_process_intersection(r3d_tinypoly* polys, r3d_int npoly) {
 	minpred = (allbits^(allbits<<4))&allbits;
 	maxpred = (allbits^(allbits>>4))&allbits;
 	for(bits = minpred; bits <= maxpred; bits = snoob(bits)) {
-		for (i = 0, nvb = 0; nvb < 4; ++i) // TODO: bit-hackiness
+
+		// TODO: bit-hackiness
+		//for(iset = 0, tbits = bits&(0x0F<<(4*tet)); tbits; ipar ^= 1, tbits ^= imask4) {
+		for (i = 0, nvb = 0; nvb < 4; ++i)
 			if((bits>>i)&1) dv[nvb++] = tdata.allverts[i]; 
 		tdata.det[bits] = r3d_orient(dv);
+
 		// ensure that the determinant is never identically zero
 		// TODO: can we do better here for degenerate tets?? I.e., an extended Cayley-menger determinant??
 		// TODO: use edge lengths as a distance proxy??
@@ -217,54 +216,34 @@ void r3d_process_intersection(r3d_tinypoly* polys, r3d_int npoly) {
 
 	// recurseively process the intersection, then compute the moments 
 	// of the resulting polytope
-	r3d_recurse_intersection(allbits, 0x7, 1, istack, ibpos, &tdata);
+	r3d_recurse_intersection(3, allbits, 1, istack, ibpos, &tdata);
 	r3d_reduce_intersection(moments, 0, &tdata);
 }
 
-void r3d_make_bitmasks(r3d_int vertbits, r3d_int dimbits, r3d_int parity, r3d_int ptype, r3d_int masks[16][3], r3d_int* nmask) {
 
-	// TODO: Do this in a better way than on the GPU! Maybe tabulate it??
-
-	r3d_int tvbits, tpar, tvmask, tdmask;
+// get the next bit mask for the given dimension
+void r3d_next_mask(r3d_int* mask, r3d_int* tbits, r3d_int* tpar, r3d_int ptype, r3d_int dim) {
 	if(ptype == R3D_TET) {
-		tdmask = dimbits&-dimbits; 
-		for(*nmask = 0, tvbits = vertbits, tpar = parity; tvbits; tpar ^= 1, tvbits ^= tvmask, ++*nmask) {
-			tvmask = tvbits&-tvbits;
-			masks[*nmask][0] = tvmask; 
-			masks[*nmask][1] = tdmask;
-			masks[*nmask][2] = tpar;
-		}
+		*mask = (*tbits)&-(*tbits);
 	}
-	if(ptype == R3D_CUBE) {
-		//const static r3d_int cmasks[3] = {0x0F0F0F0F, 0x33333333, 0x55555555};
-
-
-		//*tdimmask = (*tdimbits)&-(*tdimbits);
-		//(*tdimbits) ^= (*tdimmask); 
-
-		//cdim = lbpos(*tdimmask);
-		//*mask &= cmasks[cdim]; 
-		////if(!*tdimmask) *tdimmask = 1;
-		//return (*tdimbits);
+	else if(ptype == R3D_CUBE) {
+		//printf("Cube!\n");
+		*mask = (*tbits)&-(*tbits);
 	}
-	if(ptype == R3D_TRIPRISM) {}
-
-
+	(*tpar) ^= 1;
+	(*tbits) ^= (*mask);
 }
 
-r3d_int r3d_recurse_intersection(r3d_int vertbits, r3d_int dimbits, r3d_int parity, r3d_int* vertinds, r3d_real* bpos, r3d_intersection* tdata) {
+r3d_int r3d_recurse_intersection(r3d_int dim, r3d_int bits, r3d_int parity, r3d_int* vertinds, r3d_real* bpos, r3d_intersection* tdata) {
 
-	r3d_int v, p, c, poff, intersection, dim, pmask;
+	r3d_int v, p, poff, intersection;
 	r3d_int cmp, andcmp, orcmp, candind;;
-	r3d_int iset, tpar, ibits, tmask; // for iterating over set bits 
+	r3d_int iset, tpar, ibits, tbits, tmask; // for iterating over set bits 
 	r3d_real vol;
-	r3d_real ibpos[16]; 
-
-	r3d_int nchildren;
-	r3d_int children[16][3]; // TODO: How big??
+	r3d_real ibpos[16];
 
 	// if we are at D+2 vertices, check for an intersection
-	dim = popc(dimbits);
+	//dim = popc(bits)-5;
 	memset(bpos, 0, 8*sizeof(r3d_real));
 	candind = tdata->ncand++; // reserve this index for later 
 	vertinds[dim] = candind;
@@ -273,22 +252,20 @@ r3d_int r3d_recurse_intersection(r3d_int vertbits, r3d_int dimbits, r3d_int pari
 		// see if we have found some intersection
 		intersection = 1;
 		for(p = 0; p < 2; ++p) {
-			andcmp = 1; orcmp = 0; vol = 0.0;
 			poff = tdata->poffs[p];
-			pmask = tdata->pmasks[p];
-
-			r3d_make_bitmasks((vertbits&pmask)>>poff, dimbits, parity, tdata->ptypes[p], children, &nchildren); 
-			for(c = 0; c < nchildren; ++c) {
-				ibits = vertbits^(children[c][0]<<poff);
-				cmp = children[c][2]^tdata->sgn[ibits]; 
-
+			andcmp = 1; orcmp = 0; vol = 0.0;
+			for(tpar = parity, tbits = (bits&tdata->pmasks[p])>>poff; tbits;) {
+				r3d_next_mask(&tmask, &tbits, &tpar, tdata->ptypes[p], dim); 
+				ibits = (tmask<<poff)^bits;
+				cmp = tpar^tdata->sgn[ibits]; 
 				andcmp &= cmp; orcmp |= cmp;
 
 				// TODO: how to get the bary coordinates right for each tet??
 				v = lbpos(tmask); // TODO: a bit more elegant, fix the lbpos function!!
 				bpos[poff+v] = (2*tpar-1)*tdata->det[ibits]; 
-				vol += bpos[poff+v];	
+				vol += bpos[poff+v]; 
 			}
+
 			// TODO: NOT 4, whatever nverts is!
 			for(v = 0; v < 4; ++v) bpos[poff+v] /= vol;
 			intersection &= andcmp|!orcmp; // if the orientation is consistent we have an intersection
@@ -301,16 +278,10 @@ r3d_int r3d_recurse_intersection(r3d_int vertbits, r3d_int dimbits, r3d_int pari
 		// get the newest vertex position by averaging the children. 
 		for(p = 0, iset = 0; p < 2; ++p) {
 			poff = tdata->poffs[p];
-			pmask = tdata->pmasks[p];
-			r3d_make_bitmasks((vertbits&pmask)>>poff, dimbits, parity, tdata->ptypes[p], children, &nchildren); 
-			printf("Made bitmasks, dim = %d, dimbits = ", dim); print_binary(dimbits, 4);
-			for(c = 0; c < nchildren; ++c) {
-				printf(" mask[%d]: parity = %d, vertbits, dimbits = \n  ", c, children[c][2]); 
-				print_binary(vertbits^(children[c][0]<<poff), 8);
-				print_binary(dimbits^children[c][1], 4);
-			} 
-			for(c = 0; c < nchildren; ++c, iset += cmp) {
-				cmp = r3d_recurse_intersection(vertbits^(children[c][0]<<poff), dimbits^children[c][1], children[c][2], vertinds, ibpos, tdata);
+			for(tpar = parity, tbits = (bits&tdata->pmasks[p])>>poff; tbits;) {
+				r3d_next_mask(&tmask, &tbits, &tpar, tdata->ptypes[p], dim); 
+				cmp = r3d_recurse_intersection(dim-1, (tmask<<poff)^bits, tpar, vertinds, ibpos, tdata);
+				iset += cmp;
 				if(cmp) for(v = 0; v < 8; ++v) bpos[v] += ibpos[v]; // TODO: slightly cleaner for CUDA?
 			}
 		}
@@ -318,7 +289,7 @@ r3d_int r3d_recurse_intersection(r3d_int vertbits, r3d_int dimbits, r3d_int pari
 		intersection = (iset > 0);
 	}
 	// save the position for this candidate vertex 
-	if(intersection) for(v = 0; v < 16; ++v) 
+	if(intersection) for(v = 0; v < 8; ++v) 
 		tdata->candidates[candind][v] = bpos[v];
 	return intersection;
 }
@@ -337,8 +308,14 @@ void r3d_reduce_intersection(r3d_real* moments, int order, r3d_intersection* tda
 	// zero the moments and sum over all simpleces in the buffer
 	//memset(moments, 0, nmom(order)*sizeof(double));
 	for(s = 0; s < tdata->nsimp; ++s) {
+
+		r3d_int sgn =  1; //tdata->simplices[s].sgn;
 		r3d_int* inds = tdata->simpinds[s];
-		printf("Decomposed simplex %d\n", s);
+
+		printf("Decomposed simplex %d, sign = %d, vertinds =", s, sgn);
+		for(v = 0; v < 4; ++v) printf(" %d", inds[v]);
+		printf("\n");
+		// find the vertex location!
 
 		for(tet = 0; tet < 2; ++tet) {
 
